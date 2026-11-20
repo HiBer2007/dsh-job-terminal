@@ -2533,11 +2533,16 @@ window.__ModuleLoader__.load({
             let sidebarEntry = false
             let mainPanel = false
             let headerShadow = false
+            let headerEntries = 0
+            let headerPriority = null
             try {
               const slots = ctx.get('slots')
               sidebarEntry = (slots?.entries?.('sidebar.panellist') ?? []).some((entry) => entry.options?.id === PANEL_ID)
               mainPanel = (slots?.entries?.('main') ?? []).some((entry) => entry.options?.key === PANEL_ID)
-              headerShadow = (slots?.entries?.('conversation.session.header.actions') ?? []).some((entry) => entry.options?.id === 'job-list' && entry.options?.priority === -1)
+              const jobListEntries = (slots?.entries?.('conversation.session.header.actions') ?? []).filter((entry) => entry.options?.id === 'job-list')
+              headerEntries = jobListEntries.length
+              headerPriority = jobListEntries[0]?.options?.priority ?? null
+              headerShadow = jobListEntries.some((entry) => entry.options?.priority === -1)
             } catch {
               // The status report stays useful even when the slot registry is mid-teardown.
             }
@@ -2568,6 +2573,8 @@ window.__ModuleLoader__.load({
               sidebarEntry,
               mainPanel,
               headerShadow,
+              headerEntries,
+              headerPriority,
               openButton: true,
               watchedSessions,
               localeNamespace: NS,
