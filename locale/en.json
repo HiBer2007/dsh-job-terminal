@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Background Jobs Terminal",
+    "description": "Watch background-job output live from the left sidebar, with status, follow, copy, and stop controls."
+  }
+}

@@ -1,0 +1,8 @@
+# Background jobs sidebar: one Host row.
+# The panel is pure Client UI over the `jobs` Client service that
+# @deepseek-ai/dsh-api-job-controller installs; this row owns no Host resource.
+# It only makes the bundle (Client module, locales, icon) part of the profile.
+- insert:
+    - id: job-terminal
+      name: '@local/dsh-job-terminal'
+      config: {}
