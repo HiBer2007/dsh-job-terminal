@@ -85,9 +85,15 @@ provider `JobTerminal`，方法 `status`（无输入）：
 ## 验证
 
 - `node --check client.js`、`node --check index.js` 通过。
-- `node test/job-terminal.test.mjs` 通过：ANSI/CR/擦除/宽字符/截断、字节与时长
-  格式化、任务排序、会话排序、两套字典 key 一致、apply 注册的 `main` / `sidebar.panellist`
-  形状、主题 store、错误边界。
+- `npm test`：纯逻辑单测 + apply 接线（假的 ModuleLoader/React/ctx）通过：ANSI/CR/
+  擦除/宽字符/截断、字节与时长格式化、任务排序、会话排序、两套字典 key 一致、
+  apply 注册的 `main` / `sidebar.panellist` 形状、主题 store、错误边界、只读
+  Inspect Provider。
+- `npm run test:render`（先 `npm install` 装 devDependencies）：用 jsdom + React DOM
+  渲染真实 Client 半边的完整初渲染与 effect —— 会话 roster 打开、首个运行中任务
+  自动选中并 observe、ANSI 颜色与回车覆盖后的输出出现在 DOM、跟随按钮来回切换、
+  两段式停止调用 `kill(sessionId, jobId)`、返回对话调用 `selectPanel(null)`、
+  卸载时释放 watch/observe。测试输出 `RENDER TEST OK`。
 - 安装后的运行态检查（2026-11-20）：
   - `plugin_manager list_plugins` 显示 `include:job-terminal` 为 `enabled: true`、
     `fiberPhase: "active"` —— Host row 已在当前进程加载。

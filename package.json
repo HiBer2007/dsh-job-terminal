@@ -40,5 +40,14 @@
         "@deepseek-ai/dsh-client-ui-theme"
       ]
     }
+  },
+  "scripts": {
+    "test": "node test/job-terminal.test.mjs",
+    "test:render": "node test/render.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   }
 }
