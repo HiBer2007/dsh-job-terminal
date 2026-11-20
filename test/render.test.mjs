@@ -297,6 +297,18 @@ let menu = document.querySelector('.Ag-ohG_menu')
 assert.ok(menu !== null, 'job popover renders in a body portal')
 assert.match(menu.textContent, /Run the demo job/)
 
+const liveLine = [...menu.querySelectorAll('.Ag-ohG_rowLine')].find((line) => line.textContent.includes('Run the demo job'))
+assert.ok(liveLine !== undefined)
+const liveRowButton = liveLine.querySelector('.Ag-ohG_row')
+assert.ok(liveRowButton !== null)
+await act(async () => {
+  liveRowButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+})
+const inlineTerminal = document.querySelector('.dsjjt_menuTerminal')
+assert.ok(inlineTerminal !== null, 'expanding a row renders the inline retained output')
+assert.match(inlineTerminal.textContent, /hello from job/)
+assert.match(inlineTerminal.textContent, /progress 2/)
+
 const settledToggle = menu.querySelector('.Ag-ohG_sectionToggle')
 assert.ok(settledToggle !== null, 'finished section toggle renders')
 await act(async () => {

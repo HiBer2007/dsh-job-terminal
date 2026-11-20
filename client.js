@@ -1798,14 +1798,30 @@ window.__ModuleLoader__.load({
     }
 
     /** Inline retained-output preview inside the header popover. */
-    function HeaderOutput({ view, t }) {
+    function HeaderOutput({ view, job, t }) {
       const text = view?.text ?? ''
       const parsed = React.useMemo(() => parseTerminal(text), [text])
       const scrollRef = React.useRef(null)
+      const [copied, setCopied] = React.useState(false)
+      const copyTimer = React.useRef(undefined)
       React.useLayoutEffect(() => {
         const element = scrollRef.current
         if (element !== null) element.scrollTop = element.scrollHeight
       }, [parsed])
+      React.useEffect(() => () => {
+        if (copyTimer.current !== undefined) clearTimeout(copyTimer.current)
+      }, [])
+      const copy = () => {
+        if (text === '') return
+        copyPlainText(parsed.plain).then((ok) => {
+          if (!ok) return
+          setCopied(true)
+          if (copyTimer.current !== undefined) clearTimeout(copyTimer.current)
+          copyTimer.current = setTimeout(() => {
+            setCopied(false)
+          }, COPY_FEEDBACK_MS)
+        })
+      }
       const notices = []
       if (view?.gapBefore === true) {
         notices.push(h('div', { key: 'gap', className: 'Ag-ohG_notice' }, t('output.gap')))
@@ -1814,9 +1830,21 @@ window.__ModuleLoader__.load({
         notices.push(h('div', { key: 'error', className: 'Ag-ohG_notice Ag-ohG_noticeError' }, t('output.error', { error: view.error })))
       }
       const lines = parsed.lines.length > 0 ? parsed.lines : [[]]
+      const label = typeof job?.label === 'string' && job.label !== '' ? job.label : ''
       return h(
         'div',
         { className: 'Ag-ohG_panel' },
+        h(
+          'div',
+          { className: 'dsjjt_menuTermHead' },
+          h('span', { className: 'dsjjt_menuTermCommand', title: label }, label),
+          job !== undefined ? h('span', { className: 'dsjjt_menuTermStatus', 'data-state': headerDotState(job.status) }, statusLabel(job.status, t)) : null,
+          h(
+            'button',
+            { type: 'button', className: 'dsjjt_menuCopy', disabled: text === '', onClick: copy },
+            copied ? t('output.copied') : t('output.copy'),
+          ),
+        ),
         notices,
         h(
           'div',
@@ -1944,7 +1972,7 @@ window.__ModuleLoader__.load({
         { className: 'Ag-ohG_item' },
         h('div', { className: live ? 'Ag-ohG_rowLine Ag-ohG_rowLineLive' : 'Ag-ohG_rowLine' }, row, openButton, stopButton),
         expanded && view !== undefined
-          ? h(HeaderOutput, { view, t })
+          ? h(HeaderOutput, { view, job, t })
           : expanded
             ? h('div', { className: 'Ag-ohG_panel' }, h('div', { className: 'Ag-ohG_notice' }, t('header.output.waiting')))
             : null,
@@ -2404,6 +2432,16 @@ window.__ModuleLoader__.load({
       '.dsjjt_open svg{width:12px;height:12px}',
       '.dsjjt_menuTerminal{max-height:288px;overflow:auto;margin:0 8px 8px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}',
       '.dsjjt_menuEmpty{color:var(--dsw-alias-label-tertiary);font-size:11px}',
+      '.dsjjt_menuTermHead{display:flex;align-items:center;gap:8px;margin:2px 8px 6px;min-width:0}',
+      '.dsjjt_menuTermCommand{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:16px}',
+      '.dsjjt_menuTermStatus{flex:none;font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))}',
+      '.dsjjt_menuTermStatus[data-state=ongoing]{color:var(--dsw-alias-brand-primary)}',
+      '.dsjjt_menuTermStatus[data-state=warning]{color:var(--dsw-alias-state-warn-primary)}',
+      '.dsjjt_menuTermStatus[data-state=done]{color:var(--dsw-alias-state-success-primary)}',
+      '.dsjjt_menuTermStatus[data-state=error]{color:var(--dsw-alias-state-error-primary)}',
+      '.dsjjt_menuCopy{flex:none;height:20px;padding:0 6px;border:.5px solid var(--dsw-alias-border-l2);border-radius:5px;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:10px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      '.dsjjt_menuCopy:hover:not(:disabled){background:var(--dsw-alias-fill-l1);color:var(--dsw-alias-label-primary)}',
+      '.dsjjt_menuCopy:disabled{opacity:.45;cursor:default}',
       '.dshjt_headerError{color:var(--dsw-alias-state-error-primary);font-size:11px;line-height:28px;white-space:nowrap}',
       '@media (prefers-reduced-motion:reduce){.dsjjt_mdot[data-state=ongoing]{animation:none}}',
     ].join('')

@@ -115,9 +115,9 @@ provider `JobTerminal`，方法 `status`（无输入）：
   渲染真实 Client 半边的完整初渲染与 effect —— 会话 roster 打开、首个运行中任务
   自动选中并 observe、ANSI 颜色与回车覆盖后的输出出现在 DOM、跟随按钮来回切换、
   两段式停止调用 `kill(sessionId, jobId)`、返回对话调用 `selectPanel(null)`、
-  会话标题弹层的触发/已结束分节/「打开」按钮、打开后把**指定已结束任务**交给面板
-  并 observe（而不是默认的首个运行中任务）、卸载时释放 watch/observe。测试输出
-  `RENDER TEST OK`。
+  会话标题弹层的触发/已结束分节/展开保留输出/「打开」按钮、打开后把**指定已结束
+  任务**交给面板并 observe（而不是默认的首个运行中任务）、卸载时释放 watch/observe。
+  测试输出 `RENDER TEST OK`。
 - 安装后的运行态检查（2026-11-20）：
   - `plugin_manager list_plugins` 显示 `include:job-terminal` 为 `enabled: true`、
     `fiberPhase: "active"` —— Host row 已在当前进程加载。
