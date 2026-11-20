@@ -4,6 +4,13 @@
 `run_in_background` 任务，实时滚动显示所选任务的输出，并提供状态、耗时、进度、
 两段式终止、复制输出、自动跟随/暂停跟随和跳到最新。
 
+同时在**会话标题旁的内置后台任务弹层**里，每个任务行（运行中和已结束都一样）的
+停止按钮旁边新增一个「在后台任务面板中打开」按钮：点击会选中该任务所属会话、打开
+左侧栏面板并精确定位到这一条任务（不是默认的首个运行中任务）。
+
+该改动注册在 profile bundle 的 session-scoped header 插槽上，**不依赖任何 Agent
+preset 的 composition**，所以默认、创造等所有预设、所有会话都生效。
+
 - 包名：`@local/dsh-job-terminal`
 - 源码目录：`C:\Users\HiBer2007\dsh-plugins\dsh-job-terminal`
 - 依赖：DSH 0.2.1（`@deepseek-ai/dsh-api-job-controller` 提供的 Client
@@ -11,7 +18,7 @@
 
 ## 使用
 
-1. 刷新一次页面（Ctrl+R），让新安装的 Client 模块进入 boot 图。
+1. 安装后当前页面会热加载 Client 模块；若图标还没出现，刷新一次（Ctrl+R）。
 2. 展开左侧栏，点击 **后台任务**（终端字形图标，位于「插件」与「自动化任务」之间）。
 3. 页面顶部的「会话」下拉默认是当前会话；可以切换查看其他会话的任务（后台任务
    注册表按会话授权，切换会话不会激活或打断任何 Agent）。
@@ -19,11 +26,26 @@
    「跳到最新」。
 5. 运行中的任务行右侧有停止按钮：第一次点击进入待确认（红色闪烁），3 秒内再次
    点击才会真正停止；列表底部会给出确认提示。停止失败会在同一位置显示。
+6. 会话标题旁有一个「N 个后台任务」入口，展开后每个任务行在停止/箭头旁都有一个
+   终端图标的「打开」按钮：点击直接打开左侧栏面板并选中该任务。
 
 页面顶部显示运行中/已结束数量；任务行显示状态点、标签、已运行时长、类型、状态以及
 （有的话）进度行。输出区标题显示类型、状态、终止原因/退出码与进度，提供「复制输出」；
 输出区底部显示当前视图已加载的字节数、跟随状态与「跳到最新」。字节数取自前端已
 收到的观测文本（UTF-8 编码），而不是任务 ring 的过期投影，所以会随输出实时增长。
+
+### 会话标题旁的任务弹层
+
+内置 `ui-jobs` 的会话标题弹层被本插件**同 id（`job-list`）、同 order（20）、更低
+priority（-1）** 遮蔽并完整复刻：触发计数与状态点、运行中/已结束分节、展开保留输出、
+两段式停止、清空已结束都保留；每个任务行额外加一个「打开」按钮，把该行精确交给左侧栏
+面板。这个注册在 profile bundle 的 session-scoped `conversation.session.header.actions`
+插槽上，因此**所有会话、所有 Agent 预设（默认、创造等）都渲染这一版**，不依赖任何
+preset 的 composition。
+
+打开按钮的行为：`focusStore.open(sessionId, jobId)` → `ctx.layout.selectPanel('jobs')`；
+面板的 focus effect 消费这个一次性 handoff，切到对应会话并选中该任务，同时阻止
+「默认选第一个运行中任务」覆盖它。运行中和已结束的任务行都有这个按钮。
 
 ## 数据与「PTY」说明
 
@@ -62,7 +84,7 @@ stdout/stderr 管道，输出进入每个任务自己的有界 ring；任务启�
 | 文件 | 作用 |
 |---|---|
 | `index.js` | Host 半边：空实现（面板是纯 Client UI，Host 资源由 job controller 提供） |
-| `client.js` | 浏览器半边：侧栏图标、主面板、任务列表、ANSI 终端渲染、跟随/复制/终止、只读自检 provider |
+| `client.js` | 浏览器半边：侧栏图标、主面板、会话标题弹层遮蔽（含「打开」按钮）、ANSI 终端渲染、跟随/复制/终止、只读自检 provider |
 | `cordis.patch.yml` | 插入 `job-terminal` 这一 Host row |
 | `locale/zh.json`、`locale/en.json` | 插件管理器的标题与描述 |
 | `icon.svg` | 侧栏/插件列表图标（原创，currentColor） |
@@ -93,7 +115,9 @@ provider `JobTerminal`，方法 `status`（无输入）：
   渲染真实 Client 半边的完整初渲染与 effect —— 会话 roster 打开、首个运行中任务
   自动选中并 observe、ANSI 颜色与回车覆盖后的输出出现在 DOM、跟随按钮来回切换、
   两段式停止调用 `kill(sessionId, jobId)`、返回对话调用 `selectPanel(null)`、
-  卸载时释放 watch/observe。测试输出 `RENDER TEST OK`。
+  会话标题弹层的触发/已结束分节/「打开」按钮、打开后把**指定已结束任务**交给面板
+  并 observe（而不是默认的首个运行中任务）、卸载时释放 watch/observe。测试输出
+  `RENDER TEST OK`。
 - 安装后的运行态检查（2026-11-20）：
   - `plugin_manager list_plugins` 显示 `include:job-terminal` 为 `enabled: true`、
     `fiberPhase: "active"` —— Host row 已在当前进程加载。
@@ -101,14 +125,14 @@ provider `JobTerminal`，方法 `status`（无输入）：
     （`immediately: true`、6 个 inject），combo URL 返回 200 且内容含本插件文案 ——
     Client 模块已进入 boot 图并由 Host 正常提供。
   - Client 只读 provider `JobTerminal` 在**未刷新页面**的热更新后即可查询：
-    `sidebarEntry: true`、`mainPanel: true`、`activePanel: null`，证明 Client 半边
-    已在当前页面激活并把两个 seat 注册进了 live slot registry。
+    `sidebarEntry: true`、`mainPanel: true`、`headerShadow: true`、`openButton: true`，
+    证明 Client 半边已激活、两个 seat 已注册，且 `job-list` 的遮蔽以 priority -1 胜出。
   - 安装器返回的 `restart-required` 来自 HMR 对 profile 中既有待替换模块的保守
-    判断；本插件的 Host row、Client 图行、两个 seat 均已生效。若侧栏图标尚未出现，
-    刷新页面（Ctrl+R）即可让页面按新 boot 图启动；无需重启整个 DSH。
+    判断；本插件的 Host row、Client 图行、两个 seat、header 遮蔽均已生效。若图标
+    尚未出现，刷新页面（Ctrl+R）即可让页面按新 boot 图启动；无需重启整个 DSH。
 - 视觉确认边界：作者环境没有浏览器操控手段，无法目视断言图标/面板像素效果；
-  首次使用请点击左侧栏「后台任务」确认。若图标未出现，打开浏览器控制台查看
-  `client-modules:` 或 `slot entry crashed` 报错并反馈。
+  首次使用请点击左侧栏「后台任务」和会话标题旁的「打开」按钮确认。若图标未出现，
+  打开浏览器控制台查看 `client-modules:` 或 `slot entry crashed` 报错并反馈。
 
 ## 限制
 
@@ -118,5 +142,7 @@ provider `JobTerminal`，方法 `status`（无输入）：
   `output.total` 投影只在生命周期提交时刷新，所以页面不拿它当实时字节数。
 - 任务记录和输出只存在于 Host 进程内；Host 重启后清空。
 - 只读看输出，不向任务 stdin 写任何内容；需要交互式输入请用右侧栏的终端。
+- 会话标题弹层是**遮蔽**内置 `ui-jobs` 的实现：以后 DSH 升级若改变该组件的行为，
+  需要按新实现重新同步这里的复刻（触发计数、分节、展开、停止、清空、无障碍）。
 - 与本会话无关的会话也能被查看，这是 job controller 的会话授权模型（按传入的
   sessionId 做 owner fence），不是本插件额外扩大了权限。

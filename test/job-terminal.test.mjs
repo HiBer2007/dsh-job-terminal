@@ -47,8 +47,9 @@ const reactStub = {
 }
 
 const api = definition.factory((spec) => {
-  assert.equal(spec, 'react', 'the bundle may only require react')
-  return reactStub
+  if (spec === 'react') return reactStub
+  if (spec === 'react-dom') return { createPortal: (node) => node }
+  throw new Error(`unexpected module request: ${spec}`)
 })
 const internals = api.__internals
 const {
@@ -63,6 +64,10 @@ const {
   statusName,
   dotState,
   terminalFontFamily,
+  headerOrder,
+  isObservableJob,
+  headerDotState,
+  focus,
   copy,
   DEFAULT_SGR,
 } = internals
@@ -272,6 +277,26 @@ assert.equal(dotState('completed'), 'completed')
 assert.equal(dotState('failed'), 'failed')
 assert.equal(dotState('killed'), 'idle')
 
+assert.equal(headerDotState('running'), 'ongoing')
+assert.equal(headerDotState('stopping'), 'warning')
+assert.equal(headerDotState('killed'), 'warning')
+assert.equal(headerDotState('completed'), 'done')
+assert.equal(headerDotState('failed'), 'error')
+assert.equal(isObservableJob({ status: 'running', output: { total: 0 } }), true)
+assert.equal(isObservableJob({ status: 'completed', output: { total: 0 } }), false)
+assert.equal(isObservableJob({ status: 'completed', output: { total: 12 } }), true)
+assert.deepEqual(
+  headerOrder([doneEarly, liveLate, doneLate, liveEarly]).map((job) => job.id),
+  ['a', 'b', 'd', 'c'],
+)
+
+focus.open('session-x', 'job-y')
+assert.equal(focus.getSnapshot().sessionId, 'session-x')
+assert.equal(focus.getSnapshot().jobId, 'job-y')
+const focusNonce = focus.getSnapshot().nonce
+focus.clear(focusNonce)
+assert.equal(focus.getSnapshot(), null)
+
 const choices = sessionChoices({
   ids: ['old', 'new', 'missing-row'],
   byId: {
@@ -396,7 +421,19 @@ assert.equal(typeof injected.killJob, 'function')
 assert.equal(typeof injected.backToConversation, 'function')
 assert.equal(typeof injected.jobsState.getSnapshot, 'function')
 assert.equal(typeof injected.themeState.getSnapshot, 'function')
+assert.equal(typeof injected.focusState.getSnapshot, 'function')
 assert.equal(injected.lastSession.id, 'session-1', 'the last watched Session is remembered')
+
+const headerRegistration = registrations.find((entry) => entry.name === 'conversation.session.header.actions')
+assert.ok(headerRegistration !== undefined, 'the session-header job list is shadowed')
+assert.equal(headerRegistration.id, 'job-list')
+assert.equal(headerRegistration.order, 20)
+assert.equal(headerRegistration.priority, -1, 'a lower priority replaces the shipped entry')
+assert.equal(typeof headerRegistration.component, 'function')
+const headerInjected = headerRegistration.inject()
+assert.equal(typeof headerInjected.killJob, 'function')
+assert.equal(typeof headerInjected.focusState.open, 'function')
+assert.equal(typeof headerInjected.openPanel, 'function')
 
 const panelRegistration = registrations.find((entry) => entry.name === 'sidebar.panellist')
 assert.ok(panelRegistration !== undefined, 'the sidebar entry is registered')
@@ -438,6 +475,8 @@ assert.equal(status.active, true)
 assert.equal(status.panelId, 'jobs')
 assert.equal(status.sidebarEntry, true)
 assert.equal(status.mainPanel, true)
+assert.equal(status.headerShadow, true)
+assert.equal(status.openButton, true)
 assert.equal(status.lastSession, 'session-1')
 assert.equal(status.currentSession, 'session-1')
 assert.equal(status.activePanel, null)

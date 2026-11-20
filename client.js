@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({
   id: '@local/dsh-job-terminal',
   factory(require) {
     const React = require('react')
+    const ReactDOM = require('react-dom')
     const h = React.createElement
 
     const ID = '@local/dsh-job-terminal'
@@ -92,6 +93,26 @@ window.__ModuleLoader__.load({
       'output.finished': '已结束',
       'error.title': '后台任务面板出错',
       'error.hint': '刷新页面后重试。错误信息：{message}',
+      'header.count.live.one': '{count} 个后台任务运行中',
+      'header.count.live.other': '{count} 个后台任务运行中',
+      'header.count.idle.one': '{count} 个后台任务',
+      'header.count.idle.other': '{count} 个后台任务',
+      'header.list.aria': '后台任务',
+      'header.section.live': '进行中',
+      'header.section.settled': '已结束 {count}',
+      'header.section.clear': '清空',
+      'header.row.expandAria': '展开 {label} 的实时输出',
+      'header.row.collapseAria': '收起 {label} 的实时输出',
+      'header.kill.stop': '停止任务 {label}',
+      'header.kill.confirm': '再次点击确认停止',
+      'header.kill.confirmAria': '再次点击确认停止任务 {label}',
+      'header.kill.confirmAction': '确认停止',
+      'header.kill.failed': '停止失败',
+      'header.open': '在后台任务面板中打开',
+      'header.openAria': '在后台任务面板中打开 {label}',
+      'header.output.waiting': '正在连接输出…',
+      'header.error': '任务控件出错，请刷新页面',
+      'terminal.noOutput': '（无输出）',
     }
     const en = {
       'panel.title': 'Background jobs',
@@ -152,6 +173,26 @@ window.__ModuleLoader__.load({
       'output.finished': 'finished',
       'error.title': 'The background jobs panel failed',
       'error.hint': 'Reload the page and try again. Error: {message}',
+      'header.count.live.one': '{count} background job running',
+      'header.count.live.other': '{count} background jobs running',
+      'header.count.idle.one': '{count} background job',
+      'header.count.idle.other': '{count} background jobs',
+      'header.list.aria': 'Background jobs',
+      'header.section.live': 'Running',
+      'header.section.settled': 'Finished {count}',
+      'header.section.clear': 'Clear',
+      'header.row.expandAria': 'Expand live output for {label}',
+      'header.row.collapseAria': 'Collapse live output for {label}',
+      'header.kill.stop': 'Stop task {label}',
+      'header.kill.confirm': 'Click again to confirm',
+      'header.kill.confirmAria': 'Click again to confirm stopping {label}',
+      'header.kill.confirmAction': 'Confirm stop',
+      'header.kill.failed': 'Stop failed',
+      'header.open': 'Open in the background jobs panel',
+      'header.openAria': 'Open {label} in the background jobs panel',
+      'header.output.waiting': 'Connecting to output…',
+      'header.error': 'Jobs control failed; reload the page',
+      'terminal.noOutput': '(no output)',
     }
 
     // ── ANSI palette and terminal parsing ──────────────────────────────────
@@ -1236,6 +1277,7 @@ window.__ModuleLoader__.load({
         uiSessionState,
         sessionsState,
         themeState,
+        focusState,
         lastSession,
         backToConversation,
         t,
@@ -1244,12 +1286,15 @@ window.__ModuleLoader__.load({
       const uiSession = useStore(uiSessionState)
       const sessions = useStore(sessionsState)
       const theme = useStore(themeState)
+      const focus = useStore(focusState)
       const [picked, setPicked] = React.useState(undefined)
       const [selection, setSelection] = React.useState({ sessionId: undefined, jobId: undefined })
       const [killPhase, setKillPhase] = React.useState(IDLE_KILL)
       const [now, setNow] = React.useState(() => Date.now())
       const [copied, setCopied] = React.useState('idle')
       const copyTimer = React.useRef(undefined)
+      /** Set while a header-row open request owns the next selection. */
+      const focusPendingRef = React.useRef(undefined)
 
       const choices = React.useMemo(() => sessionChoices(sessions), [sessions])
       const currentId = uiSession?.key
@@ -1276,6 +1321,19 @@ window.__ModuleLoader__.load({
       const observed = selectedJobId === undefined ? undefined : jobsSnapshot.observed[selectedJobId]
       const parsed = React.useMemo(() => parseTerminal(observed?.text ?? ''), [observed?.text])
       const hasText = (observed?.text ?? '') !== ''
+
+      // Consume one header-row open request: switch the panel to that job's
+      // Session and select the exact job. The pending flag keeps the
+      // default-selection effect below from replacing it with the first live
+      // job in the same commit.
+      React.useEffect(() => {
+        if (focus === null || focus === undefined) return
+        focusPendingRef.current = focus.nonce
+        setPicked({ atCurrent: currentId, id: focus.sessionId })
+        setSelection({ sessionId: focus.sessionId, jobId: focus.jobId })
+        setKillPhase(IDLE_KILL)
+        focusState.clear(focus.nonce)
+      }, [focus?.nonce, currentId, focusState])
 
       // Watch the roster while this Session is on screen; the Client jobs
       // service reference-counts the stream and resumes whole after a reconnect.
@@ -1305,10 +1363,16 @@ window.__ModuleLoader__.load({
       }, [sessionId, selectedJobId, observe])
 
       // Keep a valid selection: default to the first live job, otherwise the
-      // first settled one; never leave a removed job selected.
+      // first settled one; never leave a removed job selected. An empty roster
+      // may still be loading, so a selection is kept until rows arrive.
       React.useEffect(() => {
-        if (sessionId === undefined || ordered.length === 0) {
+        if (sessionId === undefined) {
           if (selectedJobId !== undefined) setSelection({ sessionId: undefined, jobId: undefined })
+          return
+        }
+        if (ordered.length === 0) return
+        if (focusPendingRef.current !== undefined) {
+          focusPendingRef.current = undefined
           return
         }
         const present = selectedJobId !== undefined && ordered.some((job) => String(job.id) === selectedJobId)
@@ -1620,6 +1684,596 @@ window.__ModuleLoader__.load({
       return h(PanelBoundary, { t: props.t }, h(JobsPanel, props))
     }
 
+    // ── Session-header jobs shadow ──────────────────────────────────────────
+    // The shipped `ui-jobs` entry renders the session-header job list and its
+    // popover. Adding a per-job "open in the jobs panel" button at the exact
+    // row position requires owning that row, so this plugin shadows the entry
+    // (same id, same order, lower priority) and owns the whole popover: the
+    // trigger, running/finished sections, expandable retained output, the
+    // two-press stop, and the new open control. The entry is registered on the
+    // session-scoped header slot in the profile, so every Session — and every
+    // agent preset — gets it.
+    const HEADER_KILL_ARM_MS = 3000
+    const HEADER_KILL_FAILED_MS = 4000
+    const HEADER_MENU_GAP = 5
+    const HEADER_MENU_MARGIN = 12
+    const HEADER_MENU_WIDTH = 500
+    const HEADER_FOCUSABLE = 'button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])'
+    const HEADER_MEASURE_STYLE = Object.freeze({ visibility: 'hidden', left: 0, top: 0 })
+    const NO_JOBS = Object.freeze([])
+
+    /** A live job, or a settled one that still has retained output to expand. */
+    function isObservableJob(job) {
+      return isLive(job) || (job.output?.total ?? 0) > 0
+    }
+
+    /** Color state for the compact header dots. */
+    function headerDotState(status) {
+      if (status === 'running') return 'ongoing'
+      if (status === 'stopping' || status === 'killed') return 'warning'
+      if (status === 'completed') return 'done'
+      if (status === 'failed') return 'error'
+      return 'warning'
+    }
+
+    /** The one-line qualifier beside the trigger status. */
+    function jobDetail(job) {
+      return job.progress ?? job.detail
+    }
+
+    /** Live rows first in start order, settled rows newest-first. */
+    function headerOrder(jobs) {
+      return [...jobs].sort((left, right) => {
+        const liveLeft = isLive(left)
+        const liveRight = isLive(right)
+        if (liveLeft !== liveRight) return liveLeft ? -1 : 1
+        if (liveLeft) return left.startedAt - right.startedAt
+        const finished = (right.finishedAt ?? right.startedAt) - (left.finishedAt ?? left.startedAt)
+        return finished !== 0 ? finished : left.startedAt - right.startedAt
+      })
+    }
+
+    /**
+     * One-shot focus handoff from a header row to the jobs panel.
+     *
+     * `open` publishes the Session/job pair and a nonce; the panel's focus
+     * effect consumes that nonce exactly once. Sharing this store is what makes
+     * the open button target the row it belongs to instead of the first live
+     * job the panel would auto-select.
+     */
+    function createFocusStore() {
+      let value = null
+      let next = 0
+      const listeners = new Set()
+      return {
+        getSnapshot: () => value,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => {
+            listeners.delete(listener)
+          }
+        },
+        open(sessionId, jobId) {
+          next += 1
+          value = { sessionId, jobId, nonce: next }
+          for (const listener of listeners) listener()
+        },
+        clear(nonce) {
+          if (value === null || value.nonce !== nonce) return
+          value = null
+          for (const listener of listeners) listener()
+        },
+      }
+    }
+    const focusStore = createFocusStore()
+
+    /** A small status dot used by the trigger and rows. */
+    function HeaderDot({ state, className }) {
+      return h('span', {
+        className: className === undefined ? 'dsjjt_mdot' : `dsjjt_mdot ${className}`,
+        'data-state': state,
+        'aria-hidden': 'true',
+      })
+    }
+
+    /** The compact down chevron used by the trigger and section toggles. */
+    function HeaderChevron({ size, className }) {
+      const dimension = typeof size === 'number' ? size : 12
+      return h(
+        'svg',
+        { width: dimension, height: dimension, viewBox: '0 0 16 16', fill: 'none', className, 'aria-hidden': 'true', focusable: 'false' },
+        h('path', { d: 'M4 6.2 8 10.2 12 6.2', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' }),
+      )
+    }
+
+    /** The open-in-panel glyph: a terminal frame with its prompt. */
+    function OpenPanelGlyph() {
+      return h(
+        'svg',
+        { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true', focusable: 'false' },
+        h('rect', { x: 2.9, y: 4.4, width: 18.2, height: 15.2, rx: 3.6, stroke: 'currentColor', strokeWidth: 1.8 }),
+        h('path', { d: 'M6.6 9.2 9.4 12l-2.8 2.8', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }),
+        h('path', { d: 'M11.2 14.8h5.6', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' }),
+      )
+    }
+
+    /** Inline retained-output preview inside the header popover. */
+    function HeaderOutput({ view, t }) {
+      const text = view?.text ?? ''
+      const parsed = React.useMemo(() => parseTerminal(text), [text])
+      const scrollRef = React.useRef(null)
+      React.useLayoutEffect(() => {
+        const element = scrollRef.current
+        if (element !== null) element.scrollTop = element.scrollHeight
+      }, [parsed])
+      const notices = []
+      if (view?.gapBefore === true) {
+        notices.push(h('div', { key: 'gap', className: 'Ag-ohG_notice' }, t('output.gap')))
+      }
+      if (typeof view?.error === 'string' && view.error !== '') {
+        notices.push(h('div', { key: 'error', className: 'Ag-ohG_notice Ag-ohG_noticeError' }, t('output.error', { error: view.error })))
+      }
+      const lines = parsed.lines.length > 0 ? parsed.lines : [[]]
+      return h(
+        'div',
+        { className: 'Ag-ohG_panel' },
+        notices,
+        h(
+          'div',
+          { className: 'dsjjt_menuTerminal', ref: scrollRef, role: 'log', 'aria-live': 'off', 'aria-label': t('output.aria') },
+          text === ''
+            ? h('div', { className: 'dsjjt_menuEmpty' }, t('terminal.noOutput'))
+            : lines.map((runs, index) =>
+                h(
+                  'div',
+                  { className: 'dshjt_line', key: index },
+                  runs.map((run, runIndex) => h('span', { key: runIndex, style: run.style }, run.text)),
+                )),
+        ),
+      )
+    }
+
+    /**
+     * One header job row. The open button is a sibling of the row and stop
+     * buttons, so it never toggles the output panel or the kill confirmation;
+     * it is rendered for running, stopping, and settled rows alike.
+     */
+    function HeaderJobRow({ job, view, expanded, now, onToggle, kill, onOpen, t }) {
+      const live = isLive(job)
+      const observable = isObservableJob(job)
+      const status = statusLabel(job.status, t)
+      const detail = jobDetail(job)
+      const started = typeof job.startedAt === 'number' ? job.startedAt : now
+      const finished = typeof job.finishedAt === 'number' ? job.finishedAt : started
+      const duration = formatDuration(live ? Math.max(0, now - started) : Math.max(0, finished - started), t)
+      const label = typeof job.label === 'string' && job.label !== '' ? job.label : String(job.id)
+      const dot = h(HeaderDot, { state: headerDotState(job.status), className: 'Ag-ohG_rowDot' })
+      const chevron = observable
+        ? h('span', { className: 'Ag-ohG_chevronBox' },
+            h(HeaderChevron, { className: expanded ? 'Ag-ohG_chevron Ag-ohG_chevronOpen' : 'Ag-ohG_chevron' }))
+        : null
+      const body = live
+        ? h(
+            React.Fragment,
+            null,
+            dot,
+            h(
+              'span',
+              { className: 'Ag-ohG_main' },
+              h('span', { className: 'Ag-ohG_primary' }, h('span', { className: 'Ag-ohG_label', title: label }, label)),
+              h(
+                'span',
+                { className: 'Ag-ohG_secondary' },
+                h('span', { className: 'Ag-ohG_kind' }, job.kind ?? 'job'),
+                detail !== undefined
+                  ? h('span', { className: 'Ag-ohG_status', title: detail }, detail)
+                  : h('span', { className: 'Ag-ohG_status' }, status),
+                h('span', { className: 'Ag-ohG_duration' }, duration),
+              ),
+            ),
+            chevron,
+          )
+        : h(
+            React.Fragment,
+            null,
+            dot,
+            h('span', { className: 'Ag-ohG_kind' }, job.kind ?? 'job'),
+            h('span', { className: 'Ag-ohG_label', title: label }, label),
+            h('span', { className: 'Ag-ohG_status', title: detail ?? status }, detail ?? status),
+            h('span', { className: 'Ag-ohG_duration' }, duration),
+            chevron,
+          )
+      const row = observable
+        ? h(
+            'button',
+            {
+              type: 'button',
+              className: live ? 'Ag-ohG_row' : 'Ag-ohG_row Ag-ohG_rowSettled',
+              'aria-expanded': expanded,
+              'aria-label': t(expanded ? 'header.row.collapseAria' : 'header.row.expandAria', { label }),
+              onClick: onToggle,
+            },
+            body,
+          )
+        : h('span', { className: 'Ag-ohG_row Ag-ohG_rowSettled Ag-ohG_rowStatic' }, body)
+      const openButton = h(
+        'button',
+        {
+          type: 'button',
+          className: 'dsjjt_open',
+          title: t('header.open'),
+          'aria-label': t('header.openAria', { label }),
+          onClick: (event) => {
+            event.stopPropagation()
+            onOpen()
+          },
+        },
+        h(OpenPanelGlyph, null),
+      )
+      let stopButton = null
+      if (kill !== undefined) {
+        const stopTitle = kill.state === 'armed'
+          ? t('header.kill.confirm')
+          : kill.state === 'failed'
+            ? t('header.kill.failed')
+            : t('header.kill.stop', { label })
+        stopButton = h(
+          'button',
+          {
+            type: 'button',
+            className: kill.state === 'armed'
+              ? 'Ag-ohG_stop Ag-ohG_stopArmed'
+              : kill.state === 'failed'
+                ? 'Ag-ohG_stop Ag-ohG_stopFailed'
+                : 'Ag-ohG_stop',
+            'data-kill-state': kill.state,
+            disabled: kill.state === 'pending',
+            'aria-label': kill.state === 'armed' ? t('header.kill.confirmAria', { label }) : t('header.kill.stop', { label }),
+            title: stopTitle,
+            onClick: (event) => {
+              event.stopPropagation()
+              kill.onPress()
+            },
+          },
+          h(StopGlyph, { size: 10 }),
+          kill.state === 'armed' ? h('span', { className: 'Ag-ohG_stopLabel' }, t('header.kill.confirmAction')) : null,
+        )
+      }
+      return h(
+        'li',
+        { className: 'Ag-ohG_item' },
+        h('div', { className: live ? 'Ag-ohG_rowLine Ag-ohG_rowLineLive' : 'Ag-ohG_rowLine' }, row, openButton, stopButton),
+        expanded && view !== undefined
+          ? h(HeaderOutput, { view, t })
+          : expanded
+            ? h('div', { className: 'Ag-ohG_panel' }, h('div', { className: 'Ag-ohG_notice' }, t('header.output.waiting')))
+            : null,
+      )
+    }
+
+    /** Error boundary for the shadowed header control: a bad render must not blank the session header. */
+    class HeaderBoundary extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { error: undefined }
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error }
+      }
+
+      componentDidCatch(error) {
+        console.error('[job-terminal] header jobs control failed:', error)
+      }
+
+      render() {
+        if (this.state.error === undefined) return this.props.children
+        const t = typeof this.props.t === 'function' ? this.props.t : (key) => key
+        const message = this.state.error instanceof Error ? this.state.error.message : String(this.state.error)
+        return h('span', { className: 'dshjt_headerError', role: 'status', title: message }, t('header.error'))
+      }
+    }
+
+    /** Registered header control: keeps a render failure inside this plugin's cell. */
+    function JobsHeaderEntry(props) {
+      return h(HeaderBoundary, { t: props.t }, h(JobsHeaderAction, props))
+    }
+
+    /**
+     * The session-header job list shadow: the shipped trigger, popover,
+     * sections, expandable output and stop control, plus one open button per
+     * row that hands the job to the sidebar panel and selects it.
+     */
+    function JobsHeaderAction(props) {      const { sessionId, t, jobsState, watchRows, observe, killJob, focusState, openPanel } = props
+      const snapshot = useStore(jobsState)
+      const jobs = sessionId === undefined ? NO_JOBS : snapshot.rows[String(sessionId)] ?? NO_JOBS
+      const observedViews = snapshot.observed ?? {}
+      const [open, setOpen] = React.useState(false)
+      const [expandedKey, setExpandedKey] = React.useState(undefined)
+      const [settledOpen, setSettledOpen] = React.useState(undefined)
+      const [clearedKeys, setClearedKeys] = React.useState(() => new Set())
+      const [killPhase, setKillPhase] = React.useState(undefined)
+      const [now, setNow] = React.useState(() => Date.now())
+      const [position, setPosition] = React.useState(undefined)
+      const rootRef = React.useRef(null)
+      const triggerRef = React.useRef(null)
+      const menuRef = React.useRef(null)
+
+      const rows = React.useMemo(() => headerOrder(jobs), [jobs])
+      const liveRows = React.useMemo(() => rows.filter(isLive), [rows])
+      const settledRows = React.useMemo(
+        () => rows.filter((job) => !isLive(job) && !clearedKeys.has(String(job.id))),
+        [rows, clearedKeys],
+      )
+      const settledExpanded = settledOpen ?? liveRows.length === 0
+      const visibleCount = liveRows.length + settledRows.length
+      const menuOpen = open && visibleCount > 0
+
+      // The roster stream is kept open while the header lives, so the trigger
+      // appears as soon as a job is registered. The Client jobs service shares
+      // this stream with the panel, so opening the panel does not restart it.
+      React.useEffect(() => {
+        if (sessionId === undefined) return undefined
+        return watchRows(sessionId)
+      }, [sessionId, watchRows])
+
+      React.useEffect(() => {
+        if (!menuOpen || liveRows.length === 0) return undefined
+        setNow(Date.now())
+        const timer = setInterval(() => {
+          setNow(Date.now())
+        }, 1000)
+        return () => {
+          clearInterval(timer)
+        }
+      }, [menuOpen, liveRows.length])
+
+      const expandedRow = menuOpen && expandedKey !== undefined
+        ? rows.find((job) => String(job.id) === expandedKey)
+        : undefined
+      const activeJob = expandedRow !== undefined && isObservableJob(expandedRow) ? expandedRow.id : undefined
+      React.useEffect(() => {
+        if (sessionId === undefined || activeJob === undefined) return undefined
+        return observe(sessionId, activeJob)
+      }, [sessionId, activeJob, observe])
+
+      React.useEffect(() => {
+        if (expandedKey !== undefined && !rows.some((job) => String(job.id) === expandedKey)) setExpandedKey(undefined)
+      }, [rows, expandedKey])
+
+      React.useEffect(() => {
+        if (killPhase === undefined || killPhase.state === 'pending') return undefined
+        const delay = killPhase.state === 'armed' ? HEADER_KILL_ARM_MS : HEADER_KILL_FAILED_MS
+        const timer = setTimeout(() => {
+          setKillPhase((current) => (current?.key === killPhase.key && current.state === killPhase.state ? undefined : current))
+        }, delay)
+        return () => {
+          clearTimeout(timer)
+        }
+      }, [killPhase])
+
+      React.useEffect(() => {
+        if (killPhase !== undefined && !rows.some((job) => String(job.id) === killPhase.key && job.status === 'running')) {
+          setKillPhase(undefined)
+        }
+      }, [rows, killPhase])
+
+      const pressKill = (job) => {
+        const key = String(job.id)
+        if (killPhase?.key !== key || killPhase.state !== 'armed') {
+          setKillPhase({ key, state: 'armed' })
+          return
+        }
+        setKillPhase({ key, state: 'pending' })
+        killJob(sessionId, key).then(
+          (ok) => {
+            setKillPhase((current) => (current?.key === key && !ok ? { key, state: 'failed' } : current))
+          },
+          () => {
+            setKillPhase({ key, state: 'failed' })
+          },
+        )
+      }
+
+      const openJob = (job) => {
+        focusState.open(sessionId, String(job.id))
+        openPanel()
+        setOpen(false)
+        setExpandedKey(undefined)
+      }
+
+      // Fixed placement below the trigger, flipped above when the viewport's
+      // bottom is too close. Re-measured on viewport changes and row expansion.
+      const place = React.useCallback(() => {
+        const trigger = triggerRef.current
+        const menu = menuRef.current
+        if (trigger === null || menu === null) return
+        const rect = trigger.getBoundingClientRect()
+        const width = Math.min(HEADER_MENU_WIDTH, window.innerWidth - HEADER_MENU_MARGIN * 2)
+        const height = menu.getBoundingClientRect().height
+        const left = Math.min(Math.max(HEADER_MENU_MARGIN, rect.left), window.innerWidth - width - HEADER_MENU_MARGIN)
+        let top = rect.bottom + HEADER_MENU_GAP
+        if (top + height > window.innerHeight - HEADER_MENU_MARGIN) {
+          top = Math.max(HEADER_MENU_MARGIN, rect.top - height - HEADER_MENU_GAP)
+        }
+        setPosition((current) => (
+          current !== undefined && current.top === top && current.left === left && current.width === width
+            ? current
+            : { top, left, width }
+        ))
+      }, [])
+
+      React.useLayoutEffect(() => {
+        if (!menuOpen) return undefined
+        place()
+        const onViewport = () => {
+          place()
+        }
+        window.addEventListener('resize', onViewport)
+        window.addEventListener('scroll', onViewport, true)
+        return () => {
+          window.removeEventListener('resize', onViewport)
+          window.removeEventListener('scroll', onViewport, true)
+        }
+      }, [menuOpen, place, expandedKey, settledExpanded, visibleCount, rows.length])
+
+      React.useEffect(() => {
+        if (!menuOpen) return undefined
+        const onPointer = (event) => {
+          const root = rootRef.current
+          const menu = menuRef.current
+          if (root !== null && root.contains(event.target)) return
+          if (menu !== null && menu.contains(event.target)) return
+          setOpen(false)
+        }
+        document.addEventListener('pointerdown', onPointer, true)
+        return () => {
+          document.removeEventListener('pointerdown', onPointer, true)
+        }
+      }, [menuOpen])
+
+      const onKeyDown = (event) => {
+        if (!menuOpen) return
+        const trigger = triggerRef.current
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          setOpen(false)
+          trigger?.focus()
+          return
+        }
+        if (event.key !== 'Tab') return
+        const menu = menuRef.current
+        if (trigger === null || menu === null) return
+        const focusable = [...menu.querySelectorAll(HEADER_FOCUSABLE)]
+        if (focusable.length === 0) return
+        if (event.target === trigger) {
+          if (event.shiftKey) return
+          event.preventDefault()
+          focusable[0].focus()
+        } else if (event.shiftKey ? event.target === focusable[0] : event.target === focusable[focusable.length - 1]) {
+          event.preventDefault()
+          trigger.focus()
+        }
+      }
+
+      if (visibleCount === 0) return null
+
+      const count = liveRows.length > 0 ? liveRows.length : visibleCount
+      const countLabel = t(
+        liveRows.length > 0
+          ? liveRows.length === 1 ? 'header.count.live.one' : 'header.count.live.other'
+          : visibleCount === 1 ? 'header.count.idle.one' : 'header.count.idle.other',
+        { count },
+      )
+      const clearSettled = () => {
+        setClearedKeys((current) => {
+          const next = new Set(current)
+          for (const job of settledRows) next.add(String(job.id))
+          return next
+        })
+        if (expandedKey !== undefined && settledRows.some((job) => String(job.id) === expandedKey)) setExpandedKey(undefined)
+      }
+      const item = (job) => h(HeaderJobRow, {
+        key: String(job.id),
+        job,
+        view: isObservableJob(job) ? observedViews[String(job.id)] : undefined,
+        expanded: expandedKey === String(job.id),
+        now,
+        onToggle: () => {
+          setExpandedKey((current) => (current === String(job.id) ? undefined : String(job.id)))
+        },
+        kill: job.status === 'running'
+          ? {
+              state: killPhase?.key === String(job.id) ? killPhase.state : 'idle',
+              onPress: () => {
+                pressKill(job)
+              },
+            }
+          : undefined,
+        onOpen: () => {
+          openJob(job)
+        },
+        t,
+      })
+
+      const menu = menuOpen
+        ? ReactDOM.createPortal(
+            h(
+              'div',
+              {
+                ref: menuRef,
+                className: 'Ag-ohG_menu dsjjt_menu',
+                style: position ?? HEADER_MEASURE_STYLE,
+                role: 'dialog',
+                'aria-label': t('header.list.aria'),
+              },
+              h(
+                'ul',
+                { className: 'Ag-ohG_menuBody', 'aria-label': t('header.list.aria') },
+                liveRows.length > 0
+                  ? h('li', { className: 'Ag-ohG_sectionHeader', 'aria-hidden': 'true' }, t('header.section.live'))
+                  : null,
+                liveRows.map(item),
+                settledRows.length > 0
+                  ? h(
+                      'li',
+                      { className: 'Ag-ohG_sectionHeader' },
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'Ag-ohG_sectionToggle',
+                          'aria-expanded': settledExpanded,
+                          onClick: () => {
+                            setSettledOpen(!settledExpanded)
+                          },
+                        },
+                        h(HeaderChevron, {
+                          className: settledExpanded
+                            ? 'Ag-ohG_sectionChevron Ag-ohG_sectionChevronOpen'
+                            : 'Ag-ohG_sectionChevron',
+                        }),
+                        t('header.section.settled', { count: settledRows.length }),
+                      ),
+                      h(
+                        'button',
+                        { type: 'button', className: 'Ag-ohG_sectionClear', onClick: clearSettled },
+                        t('header.section.clear'),
+                      ),
+                    )
+                  : null,
+                settledExpanded ? settledRows.map(item) : null,
+              ),
+            ),
+            document.body,
+          )
+        : null
+
+      return h(
+        'div',
+        { ref: rootRef, onKeyDown },
+        h(
+          'button',
+          {
+            ref: triggerRef,
+            type: 'button',
+            className: 'Ag-ohG_trigger',
+            'aria-expanded': menuOpen,
+            'aria-label': countLabel,
+            onClick: () => {
+              setNow(Date.now())
+              setOpen((current) => !current)
+            },
+          },
+          liveRows.length > 0 ? h(HeaderDot, { state: 'ongoing', className: 'Ag-ohG_triggerDot' }) : null,
+          h('span', { className: 'Ag-ohG_count' }, countLabel),
+          h(HeaderChevron, { className: open ? 'Ag-ohG_triggerOpen' : undefined }),
+        ),
+        menu,
+      )
+    }
+
+
     // ── styles ─────────────────────────────────────────────────────────────
     const CSS = [
       '.dshjt_page{box-sizing:border-box;height:100%;min-height:0;width:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.6}',
@@ -1734,6 +2388,24 @@ window.__ModuleLoader__.load({
       '@media (max-width:900px){.dshjt_split{grid-template-columns:minmax(220px,300px) minmax(0,1fr)}.dshjt_head{padding:20px 20px 14px}.dshjt_outHead{padding:10px 14px}.dshjt_terminal{padding:8px 14px 12px}.dshjt_termFoot{padding:6px 14px}}',
       '@media (max-width:720px){.dshjt_split{grid-template-columns:1fr;grid-template-rows:minmax(120px,38%) minmax(0,1fr)}.dshjt_listPane{border-right:0;border-bottom:1px solid var(--dsw-alias-border-l1)}.dshjt_subtitle{display:none}.dshjt_headActions{width:100%;justify-content:flex-start}}',
       '@media (prefers-reduced-motion:reduce){.dshjt_dot[data-state=running],.dshjt_waitDot,.dshjt_caret,.dshjt_stop[data-kill-state=armed]{animation:none}}',
+      // Shipped session-header jobs popover geometry and row styling (the
+      // shadowed entry keeps the same look); `dsjjt_` adds the open control
+      // and the popover surface this plugin owns.
+      `.Ag-ohG_trigger{border-radius:var(--dsw-radius-sm);min-height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:0;align-items:center;gap:3px;padding:3px 2px;font-size:12px;line-height:18px;display:inline-flex}.Ag-ohG_trigger:hover,.Ag-ohG_trigger:focus-visible{color:var(--dsw-alias-label-secondary)}.Ag-ohG_trigger svg{transition:transform .12s}.Ag-ohG_triggerOpen{transform:rotate(180deg)}.Ag-ohG_triggerDot{flex:none}.Ag-ohG_count{margin:0 5px}.Ag-ohG_menu{z-index:100;box-sizing:border-box;--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:500px;max-width:min(560px,100vw - 32px);max-height:min(480px,100vh - 140px);box-shadow:var(--dsw-elevation-prominent);flex-direction:column;display:flex;position:fixed;overflow:hidden}.Ag-ohG_menuBody{flex-direction:column;gap:1px;min-height:0;margin:0;padding:4px;list-style:none;display:flex;overflow:auto}.Ag-ohG_sectionHeader{border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);justify-content:space-between;align-items:center;margin:4px 4px 1px;padding:4px 0 3px;font-size:11px;line-height:16px;display:flex}.Ag-ohG_sectionHeader:first-child{border-top:0;margin-top:0}.Ag-ohG_sectionToggle,.Ag-ohG_sectionClear{border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:0;align-items:center;gap:3px;padding:2px 4px;font-size:11px;line-height:16px;display:inline-flex}.Ag-ohG_sectionToggle:hover,.Ag-ohG_sectionToggle:focus-visible,.Ag-ohG_sectionClear:hover,.Ag-ohG_sectionClear:focus-visible{background:var(--dsw-alias-fill-l1);color:var(--dsw-alias-label-secondary)}.Ag-ohG_sectionChevron{transition:transform .12s;transform:rotate(-90deg)}.Ag-ohG_sectionChevronOpen{transform:none}.Ag-ohG_item{flex-direction:column;display:flex}.Ag-ohG_rowLine{align-items:stretch;gap:6px;display:flex}.Ag-ohG_rowLineLive{border-radius:var(--dsw-radius-md);background:var(--dsw-alias-fill-l2);padding:4px 8px 4px 2px}.Ag-ohG_rowLineLive:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent)}.Ag-ohG_rowLineLive .Ag-ohG_kind{background:var(--dsw-specific-menu)}.Ag-ohG_rowLine .Ag-ohG_row{flex:1;min-width:0}.Ag-ohG_rowLineLive .Ag-ohG_row:hover{background:0 0}.Ag-ohG_rowLineLive .Ag-ohG_row{border-radius:var(--dsw-radius-sm)}.Ag-ohG_rowLineLive .Ag-ohG_row:focus-visible{background:color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent)}.Ag-ohG_chevronBox{border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);flex:none;justify-content:center;align-self:center;align-items:center;width:20px;height:20px;display:inline-flex}.Ag-ohG_stop{border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);width:20px;height:20px;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;justify-content:center;align-self:center;align-items:center;padding:0;display:inline-flex}.Ag-ohG_stop:hover,.Ag-ohG_stop:focus-visible{border-color:color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent);color:var(--dsw-alias-state-error-primary)}.Ag-ohG_stopArmed,.Ag-ohG_stopArmed:hover,.Ag-ohG_stopArmed:focus-visible{border-color:color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);width:auto;color:var(--dsw-alias-state-error-primary);gap:4px;padding:0 7px}.Ag-ohG_stopLabel{white-space:nowrap;font-size:11px;line-height:18px}.Ag-ohG_stopFailed{color:var(--dsw-alias-state-error-primary)}.Ag-ohG_row{box-sizing:border-box;border-radius:var(--dsw-radius-md);width:100%;min-height:28px;color:var(--dsw-alias-label-primary);text-align:left;cursor:pointer;background:0 0;border:0;align-items:center;gap:6px;padding:4px 7px;font-size:12px;line-height:17px;display:flex}.Ag-ohG_row:hover,.Ag-ohG_row:focus-visible{background:var(--dsw-alias-fill-l1)}.Ag-ohG_rowStatic{cursor:default}.Ag-ohG_rowStatic:hover{background:0 0}.Ag-ohG_rowSettled{color:var(--dsw-alias-label-tertiary)}.Ag-ohG_row .Ag-ohG_rowDot{flex:none}.Ag-ohG_main{flex-direction:column;flex:1;gap:2px;min-width:0;display:flex}.Ag-ohG_primary{align-items:baseline;gap:8px;min-width:0;display:flex}.Ag-ohG_secondary{align-items:center;gap:6px;min-width:0;display:flex}.Ag-ohG_kind{border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);flex:none;padding:0 5px;font-size:10px;line-height:16px}.Ag-ohG_label{min-width:0;font-family:var(--dsw-font-mono);white-space:nowrap;text-overflow:ellipsis;flex:1;overflow:hidden}.Ag-ohG_status{max-width:60%;color:var(--dsw-alias-label-tertiary);white-space:nowrap;text-overflow:ellipsis;flex:none;font-size:10px;line-height:16px;overflow:hidden}.Ag-ohG_duration{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;flex:none;font-size:11px;line-height:18px}.Ag-ohG_chevron{color:var(--dsw-alias-label-tertiary);flex:none}.Ag-ohG_chevronOpen{transform:rotate(180deg)}.Ag-ohG_panel{--dsl-terminal-command-whitespace:pre-wrap;--dsl-terminal-line-whitespace:pre-wrap;--dsl-terminal-output-max-height:288px;margin:0 8px 8px}.Ag-ohG_notice{color:var(--dsw-alias-label-tertiary);margin:0 8px 6px;font-size:11px;line-height:16px}.Ag-ohG_noticeError{color:var(--dsw-alias-state-error-primary)}`,
+      '.dsjjt_menu{background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px}',
+      '.dsjjt_mdot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-state-idle-primary)}',
+      '.dsjjt_mdot[data-state=ongoing]{background:var(--dsw-alias-brand-primary);animation:dshjt-pulse 1.4s ease-in-out infinite}',
+      '.dsjjt_mdot[data-state=warning]{background:var(--dsw-alias-state-warn-primary)}',
+      '.dsjjt_mdot[data-state=done]{background:var(--dsw-alias-state-success-primary)}',
+      '.dsjjt_mdot[data-state=error]{background:var(--dsw-alias-state-error-primary)}',
+      '.dsjjt_open{border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);width:20px;height:20px;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;justify-content:center;align-self:center;align-items:center;padding:0;display:inline-flex}',
+      '.dsjjt_open:hover,.dsjjt_open:focus-visible{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);color:var(--dsw-alias-brand-primary)}',
+      '.dsjjt_open:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.dsjjt_open svg{width:12px;height:12px}',
+      '.dsjjt_menuTerminal{max-height:288px;overflow:auto;margin:0 8px 8px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}',
+      '.dsjjt_menuEmpty{color:var(--dsw-alias-label-tertiary);font-size:11px}',
+      '.dshjt_headerError{color:var(--dsw-alias-state-error-primary);font-size:11px;line-height:28px;white-space:nowrap}',
+      '@media (prefers-reduced-motion:reduce){.dsjjt_mdot[data-state=ongoing]{animation:none}}',
     ].join('')
 
     /** Insert the panel stylesheet once per Client generation. */
@@ -1807,6 +2479,7 @@ window.__ModuleLoader__.load({
           uiSessionState: ctx.uiSession.adapter.current,
           sessionsState: ctx.sessions.list,
           themeState: themeStore,
+          focusState: focusStore,
           lastSession,
           backToConversation: () => ctx.layout.selectPanel(null),
         }),
@@ -1819,6 +2492,25 @@ window.__ModuleLoader__.load({
         locale: NS,
         label: () => t('panel.title'),
       }, JobsIcon)), ID + ': sidebar entry')
+
+      // Shadow the shipped session-header job list with the same id and order
+      // but a lower priority. The entry is session-scoped and installed in the
+      // profile bundle, so every Session and every agent preset renders it.
+      ctx.effect(() => ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+        name: 'conversation.session.header.actions',
+        id: 'job-list',
+        order: 20,
+        priority: -1,
+        locale: NS,
+        inject: () => ({
+          jobsState: ctx.jobs.state,
+          watchRows: (sessionId) => ctx.jobs.watchRows(sessionId),
+          observe: (sessionId, jobId) => ctx.jobs.observe(sessionId, jobId),
+          killJob: async (sessionId, jobId) => (await ctx.jobs.kill(sessionId, jobId)).ok,
+          focusState: focusStore,
+          openPanel: () => ctx.layout.selectPanel(PANEL_ID),
+        }),
+      }, JobsHeaderEntry)), ID + ': header jobs action')
 
       // Read-only diagnostic provider: its presence proves the Client half
       // activated, and it reports the registrations this plugin made. The
@@ -1840,10 +2532,12 @@ window.__ModuleLoader__.load({
             if (method !== 'status') throw new Error(`unknown JobTerminal inspect method "${method}"`)
             let sidebarEntry = false
             let mainPanel = false
+            let headerShadow = false
             try {
               const slots = ctx.get('slots')
               sidebarEntry = (slots?.entries?.('sidebar.panellist') ?? []).some((entry) => entry.options?.id === PANEL_ID)
               mainPanel = (slots?.entries?.('main') ?? []).some((entry) => entry.options?.key === PANEL_ID)
+              headerShadow = (slots?.entries?.('conversation.session.header.actions') ?? []).some((entry) => entry.options?.id === 'job-list' && entry.options?.priority === -1)
             } catch {
               // The status report stays useful even when the slot registry is mid-teardown.
             }
@@ -1873,6 +2567,8 @@ window.__ModuleLoader__.load({
               activePanel,
               sidebarEntry,
               mainPanel,
+              headerShadow,
+              openButton: true,
               watchedSessions,
               localeNamespace: NS,
             }
@@ -1899,6 +2595,10 @@ window.__ModuleLoader__.load({
         statusLabel,
         dotState,
         terminalFontFamily,
+        headerOrder,
+        isObservableJob,
+        headerDotState,
+        focus: focusStore,
         ANSI_PALETTE,
         DEFAULT_SGR,
         copy: { zh, en },

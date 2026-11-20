@@ -33,14 +33,19 @@ window.__ModuleLoader__ = {
 }
 
 const React = await import('react')
+const ReactDOM = await import('react-dom')
 const { createRoot } = await import('react-dom/client')
 const { act } = React
 
 await import(pathToFileURL(clientPath).href + `?render=${Date.now()}`)
 const definition = window.__definition
 assert.ok(definition !== undefined, 'client bundle registered')
-const api = definition.factory(() => React)
-const { copy } = api.__internals
+const api = definition.factory((spec) => {
+  if (spec === 'react') return React
+  if (spec === 'react-dom') return ReactDOM
+  throw new Error(`unexpected module request: ${spec}`)
+})
+const { copy, focus } = api.__internals
 
 function makeT(dict) {
   return (key, params) => {
@@ -100,6 +105,12 @@ const jobsState = createStore({
       text: '\u001b[32mhello\u001b[0m from job\nprogress 1\rprogress 2\n',
       gapBefore: false,
       streaming: true,
+    },
+    'pwsh-done': {
+      jobId: 'pwsh-done',
+      text: 'finished output line\n',
+      gapBefore: false,
+      streaming: false,
     },
   },
 })
@@ -258,5 +269,84 @@ await act(async () => {
 })
 assert.ok(releases.includes('watch'), 'roster watch released on unmount')
 assert.ok(releases.includes('observe'), 'observation released on unmount')
+
+// ── header shadow: open button hands the exact job to the panel ────────────
+const header = registrations.find((entry) => entry.name === 'conversation.session.header.actions')
+assert.ok(header !== undefined, 'session-header job list shadow registered')
+assert.equal(header.id, 'job-list')
+assert.equal(header.priority, -1, 'the shadow wins over the shipped entry')
+const headerInjected = header.inject()
+assert.equal(headerInjected.focusState, focus, 'the header and the panel share the focus store')
+
+const headerContainer = document.createElement('div')
+document.body.appendChild(headerContainer)
+const headerRoot = createRoot(headerContainer)
+await act(async () => {
+  headerRoot.render(React.createElement(header.component, { ...headerInjected, t, sessionId }))
+})
+await act(async () => {
+  await Promise.resolve()
+})
+
+const trigger = headerContainer.querySelector('.Ag-ohG_trigger')
+assert.ok(trigger !== null, 'job trigger renders in the session header')
+await act(async () => {
+  trigger.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+})
+let menu = document.querySelector('.Ag-ohG_menu')
+assert.ok(menu !== null, 'job popover renders in a body portal')
+assert.match(menu.textContent, /Run the demo job/)
+
+const settledToggle = menu.querySelector('.Ag-ohG_sectionToggle')
+assert.ok(settledToggle !== null, 'finished section toggle renders')
+await act(async () => {
+  settledToggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+})
+menu = document.querySelector('.Ag-ohG_menu')
+const settledLine = [...menu.querySelectorAll('.Ag-ohG_rowLine')].find((line) => line.textContent.includes('Finished demo job'))
+assert.ok(settledLine !== undefined, 'finished job row expands')
+const openButton = settledLine.querySelector('.dsjjt_open')
+assert.ok(openButton !== null, 'open button sits in the finished job row')
+assert.equal(openButton.getAttribute('aria-label'), '在后台任务面板中打开 Finished demo job')
+
+await act(async () => {
+  openButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+})
+assert.ok(selectPanelCalls.includes('jobs'), 'open selects the jobs panel')
+assert.deepEqual(
+  { sessionId: focus.getSnapshot()?.sessionId, jobId: focus.getSnapshot()?.jobId },
+  { sessionId, jobId: 'pwsh-done' },
+  'open hands the exact finished job to the panel',
+)
+assert.equal(document.querySelector('.Ag-ohG_menu'), null, 'open closes the popover')
+
+await act(async () => {
+  headerRoot.unmount()
+})
+headerContainer.remove()
+
+// The panel consumes the handoff and selects the finished job instead of the
+// first live job its default selection would otherwise choose.
+const focusedContainer = document.createElement('div')
+document.body.appendChild(focusedContainer)
+const focusedRoot = createRoot(focusedContainer)
+await act(async () => {
+  focusedRoot.render(React.createElement(main.component, { ...injected, t }))
+})
+await act(async () => {
+  await Promise.resolve()
+})
+const focusedPage = focusedContainer.querySelector('[data-job-terminal]')
+assert.ok(focusedPage !== null)
+assert.match(focusedPage.textContent, /Finished demo job/)
+assert.match(focusedPage.textContent, /finished output line/)
+assert.equal(focusedPage.querySelector('.dshjt_outTitle')?.textContent, 'Finished demo job')
+assert.deepEqual(observeCalls.at(-1), [sessionId, 'pwsh-done'], 'the focused finished job is observed')
+assert.equal(focus.getSnapshot(), null, 'the handoff is consumed once')
+
+await act(async () => {
+  focusedRoot.unmount()
+})
+focusedContainer.remove()
 
 console.log('RENDER TEST OK')
