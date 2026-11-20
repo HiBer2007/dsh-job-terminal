@@ -5,6 +5,11 @@
   "type": "module",
   "description": "Left-sidebar background-job panel with a live terminal-style output view, status, follow, copy, and stop controls.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HiBer2007/dsh-job-terminal.git"
+  },
+  "homepage": "https://github.com/HiBer2007/dsh-job-terminal#readme",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
